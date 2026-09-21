@@ -1,0 +1,44 @@
+{
+  "vehicleModel": "Ford Transit (cambio automatico)",
+  "fuelConsumption": 9.5,
+  "wearCostPerKm": 0.25,
+  "origins": [
+    {
+      "id": "casatenovo",
+      "name": "Sede Operativa Casatenovo (LC)",
+      "address": "Via Roma, 23880 Casatenovo LC, Italia",
+      "lat": 45.6983,
+      "lon": 9.3106,
+      "isDefault": true
+    },
+    {
+      "id": "seregno",
+      "name": "Negozio di Seregno (MB)",
+      "address": "Seregno MB, Italia",
+      "lat": 45.6497,
+      "lon": 9.2054,
+      "isDefault": false
+    }
+  ],
+  "originName": "Sede Operativa Casatenovo (LC)",
+  "originAddress": "Via Roma, 23880 Casatenovo LC, Italia",
+  "originLat": 45.6983,
+  "originLon": 9.3106,
+  "staffRoles": [
+    {
+      "id": "tecnico_ortopedico",
+      "name": "Tecnico Ortopedico",
+      "hourlyRate": 50,
+      "isPredefined": true
+    },
+    {
+      "id": "tecnico_ausili",
+      "name": "Tecnico degli Ausili",
+      "hourlyRate": 40,
+      "isPredefined": true
+    }
+  ],
+  "autoFetchFuelPrice": true,
+  "fallbackFuelPrice": 1.85,
+  "googleMapsApiKey": ""
+}
