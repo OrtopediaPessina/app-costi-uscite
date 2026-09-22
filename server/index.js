@@ -46,6 +46,11 @@ function getSettings() {
   return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
 }
 
+// 0. Health check endpoint for Render cold-starts & keep-alive
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+});
+
 // 1. GET Settings
 app.get('/api/settings', (req, res) => {
   try {
@@ -263,8 +268,10 @@ if (fs.existsSync(distPath)) {
   });
 }
 
-// Start background initial MIMIT fetch
-fetchLombardiaGasolioPrice(false).catch(err => console.warn('Background MIMIT fetch warning:', err.message));
+// Start non-blocking background MIMIT fetch
+setTimeout(() => {
+  fetchLombardiaGasolioPrice(false).catch(err => console.warn('[MIMIT] Non-blocking boot fetch info:', err.message));
+}, 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[SERVER] App Costi Uscite server in esecuzione sulla porta ${PORT} (0.0.0.0)`);

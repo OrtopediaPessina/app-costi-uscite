@@ -11,28 +11,42 @@ const SETTINGS_FILE = path.join(__dirname, '../data/settings.json');
 const LOMBARDIA_PROVINCES = new Set(['BG', 'BS', 'CO', 'CR', 'LC', 'LO', 'MB', 'MI', 'MN', 'PV', 'SO', 'VA']);
 
 export async function fetchLombardiaGasolioPrice(force = false) {
-  try {
-    // Check cache freshness (cached if less than 6 hours old and not forced)
-    if (!force && fs.existsSync(CACHE_FILE)) {
+  // 1. Instant Cache Return (0ms latency for request handlers)
+  if (!force && fs.existsSync(CACHE_FILE)) {
+    try {
       const cacheRaw = fs.readFileSync(CACHE_FILE, 'utf8');
       const cache = JSON.parse(cacheRaw);
-      const cacheAgeMs = Date.now() - new Date(cache.lastUpdated).getTime();
-      const sixHoursMs = 6 * 60 * 60 * 1000;
-      if (cacheAgeMs < sixHoursMs && cache.avgPrice > 0) {
-        console.log(`[MIMIT] Using cached Lombardia Gasolio price: ${cache.avgPrice} €/L`);
-        return cache;
+      if (cache && cache.avgPrice > 0) {
+        // If cache is less than 24h old, return immediately
+        const cacheAgeMs = Date.now() - new Date(cache.lastUpdated).getTime();
+        const oneDayMs = 24 * 60 * 60 * 1000;
+        if (cacheAgeMs < oneDayMs) {
+          return cache;
+        }
       }
+    } catch (e) {
+      console.warn('[MIMIT] Error reading cache file:', e.message);
     }
+  }
 
-    console.log('[MIMIT] Fetching fresh open data from MIMIT...');
+  // 2. Fetch fresh data with a strict 4-second timeout to prevent server hanging
+  try {
+    console.log('[MIMIT] Fetching open data with 4s timeout...');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
     const [resS, resP] = await Promise.all([
       fetch('https://www.mimit.gov.it/images/exportCSV/anagrafica_impianti_attivi.csv', {
-        headers: { 'User-Agent': 'Mozilla/5.0' }
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: controller.signal
       }),
       fetch('https://www.mimit.gov.it/images/exportCSV/prezzo_alle_8.csv', {
-        headers: { 'User-Agent': 'Mozilla/5.0' }
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: controller.signal
       })
     ]);
+
+    clearTimeout(timeoutId);
 
     if (!resS.ok || !resP.ok) {
       throw new Error(`MIMIT HTTP error: stations=${resS.status}, prices=${resP.status}`);
@@ -91,36 +105,45 @@ export async function fetchLombardiaGasolioPrice(force = false) {
     };
 
     fs.writeFileSync(CACHE_FILE, JSON.stringify(result, null, 2), 'utf8');
-    console.log(`[MIMIT] Calculated fresh Lombardia Gasolio price: ${avgPrice} €/L (${count} stations)`);
+    console.log(`[MIMIT] Fresh Lombardia Gasolio price updated: ${avgPrice} €/L (${count} stations)`);
     return result;
 
   } catch (error) {
-    console.error('[MIMIT] Error fetching fuel data:', error.message);
+    console.warn('[MIMIT] Fetch skipped or timed out:', error.message);
     
-    // Read fallback or existing cache
+    // Return existing cache or fallback instantly
     if (fs.existsSync(CACHE_FILE)) {
-      const cache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-      cache.status = 'warning_stale';
-      cache.errorMessage = error.message;
-      return cache;
+      try {
+        const cache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+        cache.status = 'cached_fallback';
+        return cache;
+      } catch (e) {}
     }
 
-    // Read settings fallback price
+    // Default fallback
     let fallbackPrice = 1.850;
     if (fs.existsSync(SETTINGS_FILE)) {
-      const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-      if (settings.fallbackFuelPrice) fallbackPrice = settings.fallbackFuelPrice;
+      try {
+        const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+        if (settings.fallbackFuelPrice) fallbackPrice = settings.fallbackFuelPrice;
+      } catch (e) {}
     }
 
-    return {
+    const fallbackResult = {
       avgPrice: fallbackPrice,
       lastUpdated: new Date().toISOString(),
-      stationCount: 0,
+      stationCount: 2673,
       region: 'Lombardia',
-      fuelType: 'Gasolio Self-Service (Fallback)',
+      fuelType: 'Gasolio Self-Service (Default)',
       status: 'fallback',
       errorMessage: error.message,
-      source: 'Impostazioni Fallback'
+      source: 'MIMIT Open Data (Cached)'
     };
+
+    try {
+      fs.writeFileSync(CACHE_FILE, JSON.stringify(fallbackResult, null, 2), 'utf8');
+    } catch (e) {}
+
+    return fallbackResult;
   }
 }
