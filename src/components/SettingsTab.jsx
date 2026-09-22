@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, Save, Plus, Trash2, Fuel, RefreshCw, Truck, Users, MapPin, Check, AlertCircle } from 'lucide-react';
+import { Settings, Save, Plus, Trash2, Fuel, RefreshCw, Truck, Users, MapPin, Check } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
 
 export default function SettingsTab({ settings, onSaveSettings, fuelPriceData, onRefreshFuel }) {

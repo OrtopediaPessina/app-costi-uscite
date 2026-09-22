@@ -1,6 +1,5 @@
 import React from 'react';
-import { Truck, Calculator, Settings, History, Fuel, ShieldCheck } from 'lucide-react';
-import { formatCurrency } from '../utils/formatters';
+import { Truck, Calculator, Settings, History, Fuel } from 'lucide-react';
 
 export default function Header({ activeTab, setActiveTab, fuelPriceData, onRefreshFuel }) {
   return (

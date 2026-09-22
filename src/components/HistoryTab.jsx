@@ -1,5 +1,5 @@
 import React from 'react';
-import { History, FileDown, Trash2, Calendar, MapPin, Truck, ExternalLink } from 'lucide-react';
+import { History, FileDown, Trash2, MapPin } from 'lucide-react';
 import { formatCurrency, formatKm, formatTime, formatDate } from '../utils/formatters';
 import { generatePdfQuote } from '../utils/pdfGenerator';
 

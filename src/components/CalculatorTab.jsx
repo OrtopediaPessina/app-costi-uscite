@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, MapPin, Users, Clock, Fuel, Sparkles, AlertCircle, Loader2, Navigation, CheckSquare, Building2, Store } from 'lucide-react';
+import { MapPin, Users, Clock, Fuel, Sparkles, AlertCircle, Loader2, Navigation, CheckSquare, Building2, Store } from 'lucide-react';
 import RouteMap from './RouteMap';
 import CostBreakdownCard from './CostBreakdownCard';
 import { formatCurrency } from '../utils/formatters';
@@ -115,46 +115,139 @@ export default function CalculatorTab({ settings, fuelPriceData, onSaveHistory }
     setError('');
 
     try {
-      // 1. Geocode Destination
-      const geoRes = await fetch('/api/geocode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: destinationInput })
-      });
-      const geoData = await geoRes.json();
-      if (!geoRes.ok) throw new Error(geoData.error || 'Errore durante la geocodifica');
+      let geoData, routeData, calcData;
+
+      // 1. Geocode Destination (Try Server first, then Nominatim Direct)
+      try {
+        const geoRes = await fetch('/api/geocode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: destinationInput })
+        });
+        if (geoRes.ok) {
+          geoData = await geoRes.json();
+        }
+      } catch (e) {}
+
+      // Fallback Direct Nominatim Geocoding
+      if (!geoData) {
+        const searchQ = destinationInput.toLowerCase().includes('lombardia') ? destinationInput : `${destinationInput}, Lombardia, Italia`;
+        const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQ)}&limit=1`);
+        const nomData = await nomRes.json();
+        if (!nomData || nomData.length === 0) {
+          throw new Error(`Nessun risultato trovato per '${destinationInput}'. Riprova specificando il comune (es. 'Merate', 'Monza').`);
+        }
+        const item = nomData[0];
+        geoData = {
+          displayName: item.display_name,
+          lat: parseFloat(item.lat),
+          lon: parseFloat(item.lon),
+          city: item.address?.city || item.address?.town || item.address?.village || destinationInput,
+          source: 'Nominatim Direct'
+        };
+      }
       setGeocodeResult(geoData);
 
-      // 2. Route from selected Origin to Destination
-      const routeRes = await fetch('/api/route', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          originLat: selectedOrigin.lat,
-          originLon: selectedOrigin.lon,
-          destLat: geoData.lat,
-          destLon: geoData.lon
-        })
-      });
-      const routeData = await routeRes.json();
-      if (!routeRes.ok) throw new Error(routeData.error || 'Errore durante il calcolo del percorso');
+      // 2. Route Calculation (Try Server first, then OSRM Direct)
+      try {
+        const routeRes = await fetch('/api/route', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            originLat: selectedOrigin.lat,
+            originLon: selectedOrigin.lon,
+            destLat: geoData.lat,
+            destLon: geoData.lon
+          })
+        });
+        if (routeRes.ok) {
+          routeData = await routeRes.json();
+        }
+      } catch (e) {}
+
+      // Fallback Direct OSRM Routing
+      if (!routeData) {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${selectedOrigin.lon},${selectedOrigin.lat};${geoData.lon},${geoData.lat}?overview=full&geometries=geojson`;
+        const osrmRes = await fetch(osrmUrl);
+        const osrmData = await osrmRes.json();
+        if (!osrmData.routes || osrmData.routes.length === 0) {
+          throw new Error('Impossibile calcolare il percorso stradale verso la destinazione.');
+        }
+        const r = osrmData.routes[0];
+        const dist1Way = r.distance / 1000;
+        const dur1WayMin = r.duration / 60;
+        routeData = {
+          distanceKmOneWay: parseFloat(dist1Way.toFixed(1)),
+          distanceKmAR: parseFloat((dist1Way * 2).toFixed(1)),
+          durationMinOneWay: Math.round(dur1WayMin),
+          durationMinAR: Math.round(dur1WayMin * 2),
+          durationHoursAR: parseFloat(((dur1WayMin * 2) / 60).toFixed(2)),
+          geometry: r.geometry,
+          source: 'OSRM Direct'
+        };
+      }
       setRouteResult(routeData);
 
-      // 3. Calculate Cost
-      const calcRes = await fetch('/api/calculate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          originName: selectedOrigin.name,
-          distanceKmAR: routeData.distanceKmAR,
-          durationMinAR: routeData.durationMinAR,
-          interventionMin: parseInt(interventionMin, 10) || 0,
-          selectedStaff: selectedStaffList,
-          manualFuelPrice: useManualFuelPrice ? parseFloat(manualFuelPrice) : null
-        })
+      // 3. Calculate Cost (Client-side math execution for 0ms delay)
+      const fuelConsumption = parseFloat(settings.fuelConsumption || 9.5);
+      const wearCostPerKm = parseFloat(settings.wearCostPerKm || 0.25);
+      let fuelPrice = parseFloat(useManualFuelPrice ? manualFuelPrice : fuelPriceData?.avgPrice || 1.85);
+      let fuelSource = useManualFuelPrice ? 'Manuale (Sovrascritto)' : (fuelPriceData?.source || 'MIMIT Open Data Lombardia');
+
+      const litersUsed = (routeData.distanceKmAR / 100) * fuelConsumption;
+      const fuelCost = litersUsed * fuelPrice;
+      const wearCost = routeData.distanceKmAR * wearCostPerKm;
+
+      const travelTimeHours = routeData.durationMinAR / 60;
+      const interventionHours = (parseInt(interventionMin, 10) || 0) / 60;
+      const totalTimeHours = travelTimeHours + interventionHours;
+
+      let hourlyRateSum = 0;
+      const staffBreakdown = selectedStaffList.map(s => {
+        const rate = parseFloat(s.hourlyRate || 0);
+        const count = parseInt(s.count || 1, 10);
+        const subtotalRate = rate * count;
+        hourlyRateSum += subtotalRate;
+        const staffTotalCost = subtotalRate * totalTimeHours;
+        return {
+          id: s.id,
+          name: s.name,
+          count,
+          hourlyRate: rate,
+          subtotalRate,
+          staffTotalCost: parseFloat(staffTotalCost.toFixed(2))
+        };
       });
-      const calcData = await calcRes.json();
-      if (!calcRes.ok) throw new Error(calcData.error || 'Errore durante il calcolo dei costi');
+
+      const staffCost = totalTimeHours * hourlyRateSum;
+      const totalCost = fuelCost + wearCost + staffCost;
+
+      calcData = {
+        calculationDate: new Date().toISOString(),
+        parameters: {
+          originName: selectedOrigin.name,
+          distanceKmAR: parseFloat(routeData.distanceKmAR.toFixed(1)),
+          durationMinAR: Math.round(routeData.durationMinAR),
+          travelTimeHours: parseFloat(travelTimeHours.toFixed(2)),
+          interventionMin: parseInt(interventionMin, 10),
+          interventionHours: parseFloat(interventionHours.toFixed(2)),
+          totalTimeHours: parseFloat(totalTimeHours.toFixed(2)),
+          fuelConsumption,
+          wearCostPerKm,
+          fuelPrice: parseFloat(fuelPrice.toFixed(3)),
+          fuelSource
+        },
+        breakdown: {
+          litersUsed: parseFloat(litersUsed.toFixed(2)),
+          fuelCost: parseFloat(fuelCost.toFixed(2)),
+          wearCost: parseFloat(wearCost.toFixed(2)),
+          hourlyRateSum: parseFloat(hourlyRateSum.toFixed(2)),
+          staffCost: parseFloat(staffCost.toFixed(2)),
+          staffBreakdown
+        },
+        totalCost: parseFloat(totalCost.toFixed(2))
+      };
+
       setCalcResult(calcData);
 
     } catch (err) {
